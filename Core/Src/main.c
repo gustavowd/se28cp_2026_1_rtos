@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,15 +43,19 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef hlpuart1;
+DMA_HandleTypeDef hdma_lpuart1_tx;
 
 osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
-//SemaphoreHandle_t mutex;
+SemaphoreHandle_t uart_mutex_tx;
+SemaphoreHandle_t uart_sem_tx;
+QueueHandle_t 	  uart_queue_rx;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_LPUART1_UART_Init(void);
 void StartDefaultTask(void const * argument);
 
@@ -74,18 +79,107 @@ void led_task(void *arg){
 	}
 }
 
+
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  /* Prevent unused argument(s) compilation warning */
+  UNUSED(huart);
+  portBASE_TYPE teste = pdFALSE;
+
+  xSemaphoreGiveFromISR(uart_sem_tx, &teste);
+  portYIELD_FROM_ISR(teste);
+
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  /* Prevent unused argument(s) compilation warning */
+  UNUSED(huart);
+  portBASE_TYPE teste = pdFALSE;
+
+  uint8_t data = huart->Instance->RDR;
+
+  xQueueSendFromISR(uart_queue_rx, &data, &teste);
+  portYIELD_FROM_ISR(teste);
+
+}
+
+
+HAL_StatusTypeDef uart_send_rtos(char *string, uint32_t size, TickType_t timeout){
+	HAL_StatusTypeDef ret = HAL_ERROR;
+	if (xSemaphoreTake(uart_mutex_tx, timeout) == pdTRUE){
+		if (HAL_UART_Transmit_DMA(&hlpuart1, (uint8_t *)string, strlen(string)) == HAL_OK){
+			xSemaphoreTake(uart_sem_tx, portMAX_DELAY);
+			ret = HAL_OK;
+		}
+		xSemaphoreGive(uart_mutex_tx);
+	}
+	return ret;
+}
+
 uint32_t cnt1 = 0;
 void uart_task(void *arg){
 	char *text = (char *)arg;
 	while(1){
-		//if (xSemaphoreTake(mutex, portMAX_DELAY) == pdTRUE){
-			if (HAL_UART_Transmit(&hlpuart1, (uint8_t *)text, strlen(text), 1000) == HAL_OK){
-				cnt1++;
-			}
-			//xSemaphoreGive(mutex);
-		//}
+		if (uart_send_rtos(text, strlen(text), portMAX_DELAY) == HAL_OK){
+			cnt1++;
+		}
 		//taskYIELD();
+		vTaskDelay(500);
 	}
+}
+
+/*
+void console_task(void *arg){
+	(void)arg;
+	uint8_t dados[16];
+	while(1){
+		// 1. Limpa explicitamente qualquer flag de IDLE residual no hardware
+		__HAL_UART_CLEAR_FLAG(&hlpuart1, UART_CLEAR_IDLEF);
+
+		// 2. Opcional: Uma leitura rápida para garantir a limpeza em famílias antigas
+		volatile uint32_t tmpreg = hlpuart1.Instance->ISR; // ou ->SR dependendo do modelo
+		tmpreg = hlpuart1.Instance->RDR;                   // ou ->DR
+		(void)tmpreg; // Evita aviso de variável não utilizada
+		if (HAL_UARTEx_ReceiveToIdle_IT(&hlpuart1, dados, 16) == HAL_OK){
+			//if (xSemaphoreTake(mutex, portMAX_DELAY) == pdTRUE){
+				HAL_UART_Transmit(&hlpuart1, (uint8_t *)dados, strlen((char *)dados), 1000);
+				//xSemaphoreGive(mutex);
+			//}
+		}
+	}
+}
+*/
+
+void uart_rx(void *arg){
+	char data;
+	char text[9];
+	HAL_UART_Receive_IT(&hlpuart1, (uint8_t *)&data, 1);
+
+	while(1){
+		xQueueReceive(uart_queue_rx, &data, portMAX_DELAY);
+		sprintf(text, "echo %c\n\r", data);
+		uart_send_rtos(text, strlen(text), portMAX_DELAY);
+		//uart_send_rtos("echo ", 5, portMAX_DELAY);
+		//uart_send_rtos(&data, 1, portMAX_DELAY);
+		//uart_send_rtos("\n\r", 2, portMAX_DELAY);
+	}
+}
+
+volatile int count = 0;
+void sobra_cpu(void *argument)
+{
+  int i = 0;
+  int result = 0;
+  /* Infinite loop */
+  for(;;)
+  {
+	for(i=0;i<1024;i++){
+		result = result ^ i;
+	}
+	count++;
+  }
 }
 /* USER CODE END 0 */
 
@@ -118,6 +212,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_LPUART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
@@ -125,11 +220,12 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
-  //mutex = xSemaphoreCreateMutex();
+  uart_mutex_tx = xSemaphoreCreateMutex();
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
+  uart_sem_tx = xSemaphoreCreateBinary();
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -138,6 +234,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  uart_queue_rx = xQueueCreate(16, sizeof(uint8_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -151,7 +248,7 @@ int main(void)
   led_green.port = LED_GPIO_Port;
   led_green.pin = LED_Pin;
   led_green.toggle_time = 500;
-  xTaskCreate(led_task, "Tarefa do LED GREEN", 256, &led_green, 7, NULL);
+  xTaskCreate(led_task, "Tarefa do LED GREEN", 128, &led_green, 7, NULL);
 
   /*
   led_t led_red;
@@ -162,8 +259,11 @@ int main(void)
   */
   static char *text1 = "Ola mundo da tarefa 1!\n\r";
   static char *text2 = "Ola mundo da tarefa 2!\n\r";
-  xTaskCreate(uart_task, "UART Task 1", 256, text1, 3, NULL);
-  xTaskCreate(uart_task, "UART Task 2", 256, text2, 3, NULL);
+  xTaskCreate(uart_task, "UART Task 1", 128, text1, 3, NULL);
+  xTaskCreate(uart_task, "UART Task 2", 128, text2, 3, NULL);
+  xTaskCreate(uart_rx, "UART RX", 128, NULL, 4, NULL);
+
+  xTaskCreate(sobra_cpu,"Sobra CPU" , 128, NULL, 1, NULL);
   /* USER CODE END RTOS_THREADS */
 
   /* Start scheduler */
@@ -271,6 +371,23 @@ static void MX_LPUART1_UART_Init(void)
   /* USER CODE BEGIN LPUART1_Init 2 */
 
   /* USER CODE END LPUART1_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMAMUX1_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
 
 }
 
