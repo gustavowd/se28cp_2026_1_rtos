@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
+#include "keyb.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -154,12 +155,12 @@ void console_task(void *arg){
 
 void uart_rx(void *arg){
 	char data;
-	char text[9];
+	char text[128];
 	HAL_UART_Receive_IT(&hlpuart1, (uint8_t *)&data, 1);
 
 	while(1){
 		xQueueReceive(uart_queue_rx, &data, portMAX_DELAY);
-		sprintf(text, "echo %c\n\r", data);
+		sprintf(text, "asdsadaskdjasdlkjsalkdjasidjasijdasokjdoasijdosiajdosiajdsoakdnsakodjasoidjasiodsaoidjasiokd %c\n\r", data);
 		uart_send_rtos(text, strlen(text), portMAX_DELAY);
 		//uart_send_rtos("echo ", 5, portMAX_DELAY);
 		//uart_send_rtos(&data, 1, portMAX_DELAY);
@@ -180,6 +181,17 @@ void sobra_cpu(void *argument)
 	}
 	count++;
   }
+}
+
+void keyboard_task(void *arg){
+	button_t button;
+	char text[32];
+	keyb_init();
+	while(1){
+		keyb_read(&button, portMAX_DELAY);
+		sprintf(text, "Button pressed: %d\n\r", button);
+		uart_send_rtos(text, strlen(text), portMAX_DELAY);
+	}
 }
 /* USER CODE END 0 */
 
@@ -230,6 +242,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
+
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
@@ -264,6 +277,8 @@ int main(void)
   xTaskCreate(uart_rx, "UART RX", 128, NULL, 4, NULL);
 
   xTaskCreate(sobra_cpu,"Sobra CPU" , 128, NULL, 1, NULL);
+
+  xTaskCreate(keyboard_task, "Keyb Task", 256,  NULL, 3, NULL);
   /* USER CODE END RTOS_THREADS */
 
   /* Start scheduler */
@@ -404,11 +419,18 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LED_Pin */
   GPIO_InitStruct.Pin = LED_Pin;
@@ -416,6 +438,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
