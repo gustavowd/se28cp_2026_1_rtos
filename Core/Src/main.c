@@ -160,7 +160,7 @@ void uart_rx(void *arg){
 
 	while(1){
 		xQueueReceive(uart_queue_rx, &data, portMAX_DELAY);
-		sprintf(text, "asdsadaskdjasdlkjsalkdjasidjasijdasokjdoasijdosiajdosiajdsoakdnsakodjasoidjasiodsaoidjasiokd %c\n\r", data);
+		sprintf(text, "echo: %c\n\r", data);
 		uart_send_rtos(text, strlen(text), portMAX_DELAY);
 		//uart_send_rtos("echo ", 5, portMAX_DELAY);
 		//uart_send_rtos(&data, 1, portMAX_DELAY);
