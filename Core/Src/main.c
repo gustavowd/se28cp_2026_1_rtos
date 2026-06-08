@@ -261,7 +261,7 @@ int main(void)
   led_green.port = LED_GPIO_Port;
   led_green.pin = LED_Pin;
   led_green.toggle_time = 500;
-  xTaskCreate(led_task, "Tarefa do LED GREEN", 128, &led_green, 7, NULL);
+  xTaskCreate(led_task, "Tarefa do LED GREEN", 128, &led_green, 6, NULL);
 
   /*
   led_t led_red;
